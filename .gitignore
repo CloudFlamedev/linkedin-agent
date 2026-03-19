@@ -1,0 +1,27 @@
+nano .gitignore
+```
+
+Paste this:
+```
+# Secret credentials — never upload
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment — too large to upload
+venv/
+
+# Database — personal data
+logs/
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code settings
+.vscode/
