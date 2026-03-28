@@ -19,6 +19,8 @@ class AgentState(TypedDict):
     gap_analysis:          str
     missing_skills:        List[str]
     matched_skills:        List[str]
+    experience_match:      bool
+    experience_required:   int
 
     # Generated
     cover_letter:          Optional[str]

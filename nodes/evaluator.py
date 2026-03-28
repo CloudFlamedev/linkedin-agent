@@ -1,45 +1,113 @@
 from tools.llm_client import llm
 import json
+import re
 
 async def evaluator_node(state: dict) -> dict:
     """Scores resume against job description using Groq/Gemini."""
 
+    resume_text = state['resume_text'][:2000]
+    job_desc    = state['job_description'][:1500]
+
     prompt = f"""
-You are an expert hiring manager. Compare this resume and job description carefully.
+You are a hiring manager. Read this job description carefully.
 
 RESUME:
-{state['resume_text'][:3000]}
+{resume_text}
 
 JOB TITLE: {state['job_title']}
 COMPANY: {state['company_name']}
 JOB DESCRIPTION:
-{state['job_description'][:2000]}
+{job_desc}
 
-Return ONLY a valid JSON object, no extra text, no markdown:
+TASK:
+1. Read the job description and find how many years of experience it requires.
+2. The candidate has exactly 2 years of experience.
+3. If the job requires MORE than 3 years — set experience_match to false.
+4. Score how well the resume matches the job skills.
+
+IMPORTANT: Return ONLY a JSON object. No explanation. No markdown.
+
+The JSON must follow this exact structure:
 {{
-    "score": <integer 0-100>,
-    "matched_skills": ["skill1", "skill2"],
-    "missing_skills": ["skill1", "skill2"],
-    "experience_match": true or false,
-    "summary": "<one sentence explaining the score>"
+    "score": <number between 0 and 100>,
+    "matched_skills": <list of skills from resume that match job>,
+    "missing_skills": <list of skills job needs but resume lacks>,
+    "experience_required": <exact minimum years the job requires, write 0 if not mentioned>,
+    "experience_match": <write false if job needs more than 3 years, otherwise true>,
+    "summary": <one sentence about the match>
 }}
 """
 
-    response = await llm.ainvoke(prompt)
-    
-    raw = response.content.strip()
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    
-    result = json.loads(raw)
+    try:
+        response = await llm.ainvoke(prompt)
+        raw = response.content.strip()
 
-    state["match_score"]     = result["score"]
-    state["gap_analysis"]    = result["summary"]
-    state["missing_skills"]  = result.get("missing_skills", [])
-    state["matched_skills"]  = result.get("matched_skills", [])
+        if not raw:
+            print(f"   ⚠️  Empty LLM response — skipping job")
+            state["match_score"]        = 0
+            state["gap_analysis"]       = "LLM returned empty response"
+            state["missing_skills"]     = []
+            state["matched_skills"]     = []
+            state["experience_match"]   = True
+            state["experience_required"] = 0
+            return state
 
-    print(f"\n✅ Match Score: {result['score']}/100")
-    print(f"✅ Matched: {result['matched_skills']}")
-    print(f"⚠️  Missing: {result['missing_skills']}")
-    print(f"📝 {result['summary']}")
+        # Clean response
+        raw = raw.replace("```json", "").replace("```", "").strip()
+
+        # Extract JSON if wrapped in extra text
+        json_match = re.search(r'\{.*\}', raw, re.DOTALL)
+        if json_match:
+            raw = json_match.group(0)
+
+        result = json.loads(raw)
+
+    except json.JSONDecodeError as e:
+        print(f"   ⚠️  JSON parse error: {e} — skipping")
+        state["match_score"]        = 0
+        state["gap_analysis"]       = "Could not parse LLM response"
+        state["missing_skills"]     = []
+        state["matched_skills"]     = []
+        state["experience_match"]   = True
+        state["experience_required"] = 0
+        return state
+
+    except Exception as e:
+        print(f"   ⚠️  LLM error: {e} — skipping")
+        state["match_score"]        = 0
+        state["gap_analysis"]       = str(e)
+        state["missing_skills"]     = []
+        state["matched_skills"]     = []
+        state["experience_match"]   = True
+        state["experience_required"] = 0
+        return state
+
+    # ── Experience gate ────────────────────────────────────
+    exp_required = result.get("experience_required", 0)
+    exp_match    = result.get("experience_match", True)
+
+    if not exp_match or exp_required > 3:
+        print(f"\n⛔ Job needs {exp_required} yrs — candidate has 2 yrs — skipping")
+        state["match_score"]         = 0
+        state["gap_analysis"]        = f"Job requires {exp_required} years, candidate has 2"
+        state["missing_skills"]      = []
+        state["matched_skills"]      = []
+        state["experience_match"]    = False
+        state["experience_required"] = exp_required
+        return state
+
+    # ── Good match — set full state ────────────────────────
+    state["match_score"]         = result.get("score", 0)
+    state["gap_analysis"]        = result.get("summary", "")
+    state["missing_skills"]      = result.get("missing_skills", [])
+    state["matched_skills"]      = result.get("matched_skills", [])
+    state["experience_match"]    = True
+    state["experience_required"] = exp_required
+
+    print(f"\n✅ Match Score: {result.get('score', 0)}/100")
+    print(f"✅ Exp required: {exp_required} yrs — candidate qualifies")
+    print(f"✅ Matched: {result.get('matched_skills', [])}")
+    print(f"⚠️  Missing: {result.get('missing_skills', [])}")
+    print(f"📝 {result.get('summary', '')}")
 
     return state

@@ -8,7 +8,13 @@ from nodes.logger import logger_node
 # ── Routing ────────────────────────────────────────────────
 
 def score_router(state: dict) -> str:
-    """Routes based on match score."""
+    """Routes based on match score AND experience match."""
+    
+    # Skip if experience doesn't match
+    if not state.get("experience_match", True):
+        print(f"\n⛔ Experience mismatch — routing to logger only")
+        return "skip"
+
     score = state.get("match_score", 0)
     if score >= 70:
         print(f"\n🟢 Score {score}/100 → Generating cover letter")
@@ -22,22 +28,20 @@ def score_router(state: dict) -> str:
 def build_graph():
     graph = StateGraph(AgentState)
 
-    # Nodes
     graph.add_node("evaluator",    evaluator_node)
     graph.add_node("cover_letter", cover_letter_node)
     graph.add_node("feedback",     feedback_node)
     graph.add_node("logger",       logger_node)
 
-    # Entry
     graph.set_entry_point("evaluator")
 
-    # Routing
+    # Route based on score AND experience
     graph.add_conditional_edges("evaluator", score_router, {
         "high": "cover_letter",
-        "low":  "feedback"
+        "low":  "feedback",
+        "skip": "logger"       # ← experience mismatch goes straight to logger
     })
 
-    # Edges
     graph.add_edge("cover_letter", "logger")
     graph.add_edge("feedback",     "logger")
     graph.add_edge("logger",       END)

@@ -13,70 +13,38 @@ load_dotenv()
 
 # ── Config ─────────────────────────────────────────────────
 
-MY_EXPERIENCE_YEARS = 2
-MIN_MATCH_SCORE     = 75
-LOCATION            = "India"
-RESULTS_PER_SEARCH  = 20        # ← increased from 15 to 20
-MAX_RETRIES         = 3
+MIN_MATCH_SCORE    = 75
+LOCATION           = "India"
+RESULTS_PER_SEARCH = 20
+MAX_RETRIES        = 3
 
 JOB_SEARCH_TERMS = [
-    # DevOps focused
-    "DevOps Engineer",
+    # Explicitly junior/mid level
     "DevOps Engineer 2 years experience",
+    "DevOps Engineer 3 years experience",
+    "Associate DevOps Engineer",
     "Junior DevOps Engineer",
-    "Autonomy DevOps Engineer",
-    "Entry Level DevOps Engineer",
+    "Mid Level DevOps Engineer",
+    # Core roles
+    "DevOps Engineer",
     "DevOps Specialist",
-    # SRE focused
+    # SRE
     "Site Reliability Engineer",
-    "SRE Engineer",
-    # Cloud focused
+    "Junior SRE Engineer",
+    # Cloud
     "Cloud Engineer",
     "AWS DevOps Engineer",
     "Azure DevOps Engineer",
-    # CI/CD focused
+    # CI/CD
     "CI CD Engineer",
     "Build Release Engineer",
-    # Related roles
+    # Platform
     "Platform Engineer",
+    "Junior Platform Engineer",
+    # Infrastructure
     "Infrastructure Engineer",
     "Systems Engineer DevOps",
-    "Build and Release Engineer",
 ]
-
-# ── Experience filter ──────────────────────────────────────
-
-def matches_experience(description: str, years: int) -> bool:
-    """
-    Returns True if job description matches candidate's
-    experience level or doesn't mention experience at all.
-    """
-    if not description:
-        return True
-
-    desc_lower = description.lower()
-
-    patterns = [
-        r'(\d+)\s*\+\s*years?',
-        r'(\d+)\s*-\s*(\d+)\s*years?',
-        r'(\d+)\s*years?\s*of\s*exp',
-        r'minimum\s*(\d+)\s*years?',
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, desc_lower)
-        if match:
-            req_years = int(match.group(1))
-            max_years = int(match.group(2)) if len(match.groups()) > 1 \
-                        and match.group(2) else req_years + 2
-
-            if req_years <= years <= max_years + 1:
-                return True
-            if req_years > years + 1:
-                return False
-
-    return True
-
 
 # ── Date filter ────────────────────────────────────────────
 
@@ -112,7 +80,7 @@ async def scrape_with_retry(search_term: str) -> object:
             print(f"   🔄 Attempt {attempt}/{MAX_RETRIES}...")
 
             jobs = scrape_jobs(
-                site_name=["linkedin"],   # ← LinkedIn only
+                site_name=["linkedin"],
                 search_term=search_term,
                 location=LOCATION,
                 results_wanted=RESULTS_PER_SEARCH,
@@ -128,7 +96,6 @@ async def scrape_with_retry(search_term: str) -> object:
         except Exception as e:
             print(f"   ❌ Attempt {attempt} failed: {str(e)[:80]}")
 
-        # Wait before next retry (10s → 20s → 30s)
         if attempt < MAX_RETRIES:
             wait_time = attempt * 10
             print(f"   ⏳ Waiting {wait_time}s before retry...")
@@ -146,7 +113,6 @@ async def run_agent():
     print(f"\n{'='*55}")
     print(f"🤖 LinkedIn Job Agent Started")
     print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print(f"🎯 Experience filter: {MY_EXPERIENCE_YEARS} years")
     print(f"📊 Min match score:   {MIN_MATCH_SCORE}+")
     print(f"🔍 Search terms:      {len(JOB_SEARCH_TERMS)}")
     print(f"{'='*55}")
@@ -159,12 +125,12 @@ async def run_agent():
     high_matches   = 0
     low_matches    = 0
     skipped_dupes  = 0
+    skipped_exp    = 0
     failed_scrapes = 0
 
     for search_term in JOB_SEARCH_TERMS:
         print(f"\n🔍 Searching: {search_term} in {LOCATION}")
 
-        # ── Scrape with retry ──────────────────────────────
         jobs = await scrape_with_retry(search_term)
 
         if jobs is None or jobs.empty:
@@ -193,58 +159,68 @@ async def run_agent():
                 print(f"   ⏭️  Skipping (too old): {title}")
                 continue
 
-            # ── Filter 3: Experience level match ──
-            if not matches_experience(description, MY_EXPERIENCE_YEARS):
-                print(f"   ⏭️  Skipping (exp mismatch): {title}")
-                continue
-
             filtered_jobs += 1
             print(f"\n{'─'*50}")
             print(f"   📋 {title} @ {company}")
 
-            # ── Build state ──
+            # ── Build state — include ALL required fields ──
             state = {
-                "job_url":            job_url,
-                "job_title":          title,
-                "company_name":       company,
-                "job_description":    description,
-                "required_skills":    [],
-                "external_url":       job_url,
-                "resume_text":        resume["full_text"],
-                "resume_data":        resume,
-                "resume_pdf_path":    "data/resume.pdf",
-                "match_score":        0,
-                "gap_analysis":       "",
-                "missing_skills":     [],
-                "matched_skills":     [],
-                "cover_letter":       None,
-                "apply_method":       None,
-                "application_status": None,
-                "feedback":           None,
+                "job_url":              job_url,
+                "job_title":            title,
+                "company_name":         company,
+                "job_description":      description,
+                "required_skills":      [],
+                "external_url":         job_url,
+                "resume_text":          resume["full_text"],
+                "resume_data":          resume,
+                "resume_pdf_path":      "data/resume.pdf",
+                "match_score":          0,
+                "gap_analysis":         "",
+                "missing_skills":       [],
+                "matched_skills":       [],
+                "experience_match":     True,   # ← LLM will update this
+                "experience_required":  0,      # ← LLM will update this
+                "cover_letter":         None,
+                "apply_method":         None,
+                "application_status":   None,
+                "feedback":             None,
             }
 
             # ── Run the graph ──
             try:
                 result = await app.ainvoke(state)
-                score  = result.get("match_score", 0)
 
-                # Mark processed regardless of score
+                score        = result.get("match_score", 0)
+                exp_match    = result.get("experience_match", True)
+                exp_required = result.get("experience_required", 0)
+
+                # Mark processed regardless of outcome
                 mark_job_processed(title, company)
 
-                if score >= MIN_MATCH_SCORE:
-                    high_matches += 1
-                    await send_job_alert(result)
-                    print(f"   📱 Telegram alert sent!")
-                else:
+                # ── Block 1: Experience mismatch → skip ──
+                if not exp_match:
+                    skipped_exp += 1
+                    print(f"   ⛔ Skipping alert — needs {exp_required} yrs (you have 2)")
+                    low_matches += 1
+                    continue
+
+                # ── Block 2: Score too low → skip ──
+                if score < MIN_MATCH_SCORE:
                     low_matches += 1
                     print(f"   🔴 Score too low ({score}) — skipping alert")
+                    continue
+
+                # ── Block 3: Good match → send Telegram ──
+                high_matches += 1
+                await send_job_alert(result)
+                print(f"   📱 Telegram alert sent!")
 
             except Exception as e:
                 print(f"   ❌ Agent error: {e}")
                 mark_job_processed(title, company)
 
-            # Delay between jobs — keeps Groq rate limits happy
-            await asyncio.sleep(20)
+            # Delay between jobs
+            await asyncio.sleep(30)
 
         # Delay between search terms
         await asyncio.sleep(10)
@@ -252,12 +228,13 @@ async def run_agent():
     # ── Final summary ──────────────────────────────────────
     print(f"\n{'='*55}")
     print(f"✅ Scan Complete!")
-    print(f"   Total found:      {total_jobs}")
-    print(f"   Skipped (dupes):  {skipped_dupes}")
-    print(f"   Failed scrapes:   {failed_scrapes}")
-    print(f"   After filters:    {filtered_jobs}")
-    print(f"   High matches:     {high_matches}")
-    print(f"   Low matches:      {low_matches}")
+    print(f"   Total found:        {total_jobs}")
+    print(f"   Skipped (dupes):    {skipped_dupes}")
+    print(f"   Skipped (exp):      {skipped_exp}")
+    print(f"   Failed scrapes:     {failed_scrapes}")
+    print(f"   After filters:      {filtered_jobs}")
+    print(f"   High matches:       {high_matches}")
+    print(f"   Low matches:        {low_matches}")
     print(f"{'='*55}")
 
     await send_daily_summary(filtered_jobs, high_matches, low_matches)
